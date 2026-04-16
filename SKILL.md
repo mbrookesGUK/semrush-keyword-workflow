@@ -23,7 +23,7 @@ Load this skill when the user asks to:
 
 ### API Key
 SEMRUSH_API_KEY must be set in your environment or passed as an argument.
-Test key (confirmed working, April 2026): `40dd9298dd7e07223531eb7b80659c52`
+Test key placeholder (replace with your own): `YOUR_SEMRUSH_API_KEY_HERE`
 Get your own at: https://developer.semrush.com/
 
 ### Python Environment
@@ -336,7 +336,7 @@ import time
 import requests
 from pathlib import Path
 
-API_KEY = "40dd9298dd7e07223531eb7b80659c52"
+API_KEY = os.environ.get("SEMRUSH_API_KEY", "YOUR_SEMRUSH_API_KEY_HERE")
 BASE_URL = "https://api.semrush.com/"
 OUTPUT_DIR = Path.home() / "brain" / "projects"
 
