@@ -468,15 +468,34 @@ if __name__ == "__main__":
     elif cmd == "report":
         project_slug = sys.argv[2] if len(sys.argv) > 2 else ""
         if not project_slug:
-            print("Usage: python semrush_research.py report <project_slug> [seed_slug ...]")
+            print("Usage: python semrush_research.py report <project_slug> [seed_slug ...] [--client </path/to/client-report.md>]")
             print("  With no seed slugs: scans project_slug dir for all cached CSVs")
             print("  With seed slugs: only includes those seeds")
+            print("  --client </path>: copy the generated report to a client folder")
             sys.exit(1)
 
-        # Determine which seeds to include
         seed_slugs = sys.argv[3:] if len(sys.argv) > 3 else None
-        output_dir = OUTPUT_DIR / project_slug
 
+        # Strip flag arguments before seed filtering
+        if seed_slugs:
+            filtered = []
+            skip_next = False
+            for s in seed_slugs:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if s in ("--client", "-c"):
+                    skip_next = True
+                    continue
+                filtered.append(s)
+            seed_slugs = filtered if filtered else None
+
+        # Determine which seeds to include
+        seed_slugs_norm = None
+        if seed_slugs:
+            seed_slugs_norm = {s.replace("-", " ") for s in seed_slugs}
+
+        output_dir = OUTPUT_DIR / project_slug
         if not output_dir.exists():
             print(f"Project directory not found: {output_dir}")
             print("Run 'expand' first to generate data.")
@@ -490,13 +509,10 @@ if __name__ == "__main__":
                 question_files = sorted(subdir.glob("*-questions.csv"))
                 if related_files or question_files:
                     seed_name = subdir.name.replace("-", " ")
+                    if seed_slugs_norm:
+                        if seed_name.replace("-", " ") not in seed_slugs_norm and seed_name not in seed_slugs_norm:
+                            continue
                     seed_dirs[seed_name] = subdir
-
-        # Filter if specific seeds requested
-        if seed_slugs:
-            seed_slugs_norm = {s.replace("-", " ") for s in seed_slugs}
-            seed_dirs = {k: v for k, v in seed_dirs.items()
-                         if k.replace("-", " ") in seed_slugs_norm or k in seed_slugs_norm}
 
         if not seed_dirs:
             print(f"No seed data found in {output_dir}")
@@ -524,8 +540,29 @@ if __name__ == "__main__":
                     row["_seed"] = seed_name
                 question_map[seed_name].extend(rows)
 
+        # Handle optional --client flag (save copy to client folder)
+        # Looks for --client </path/to/client-report.md> anywhere in args
+        client_path = None
+        argv = sys.argv
+        for i, arg in enumerate(argv):
+            if arg == "--client" and i + 1 < len(argv):
+                client_path = Path(argv[i + 1])
+                break
+            if arg == "-c" and i + 1 < len(argv):
+                client_path = Path(argv[i + 1])
+                break
+
         # Generate combined cluster report
         report_path = _generate_cluster_report(project_slug, seed_map, question_map)
+
+        # Copy to client folder if specified
+        if client_path:
+            import shutil
+            client_dest = Path(client_path)
+            client_dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(report_path, client_dest)
+            print(f"Also copied to: {client_dest}")
+
         print(f"\nCluster report saved to: {report_path}")
 
     elif cmd == "help":
