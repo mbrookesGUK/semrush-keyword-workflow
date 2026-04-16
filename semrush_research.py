@@ -78,6 +78,9 @@ def _parse_csv(text: str) -> list[dict]:
     for line in lines[1:]:
         values = [v.strip() for v in line.split(";")]
         row = dict(zip(headers, values))
+        # Normalise: 'Keyword' is what SEMrush actually returns for 'phrase' column
+        if "Keyword" in row and "Phrase" not in row:
+            row["Phrase"] = row["Keyword"]
         rows.append(row)
     return rows
 
@@ -246,6 +249,182 @@ def generate_report(project_slug: str, seeds: list[str],
     return report_path
 
 
+def _load_csv(path: str) -> list[dict]:
+    """Load a CSV file and return rows as dicts."""
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f)
+        return list(reader)
+
+
+def _sv(row: dict, key: str) -> int:
+    """Safely get search volume as int."""
+    try:
+        return int(row.get(key, 0) or 0)
+    except (ValueError, TypeError):
+        return 0
+
+
+def _rel(row: dict) -> float:
+    """Safely get related relevance as float."""
+    try:
+        return float(row.get("Related Relevance", 0) or 0)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _generate_cluster_report(project_slug: str,
+                              seed_map: dict,
+                              question_map: dict) -> Path:
+    """
+    Build a cluster report from cached CSVs.
+    seed_map: { seed_name: [related_rows] }
+    question_map: { seed_name: [question_rows] }
+    """
+    today = date.today().isoformat()
+    output_dir = OUTPUT_DIR / project_slug
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_path = output_dir / f"{project_slug}-cluster-report-{today}.md"
+
+    lines = [
+        f"# {project_slug.replace('-', ' ').title()} — Keyword Cluster Report",
+        f"**Date:** {today}",
+        f"**Seeds:** {', '.join(seed_map.keys())}",
+        f"**Note:** UK (gb) SEMRush database returned no data for all seeds — US (us) database used.",
+        "",
+        "---",
+        "",
+        "## Cluster Summary",
+        "",
+        "| Seed Topic | Related Keywords | Questions |",
+        "|---|---|---|",
+    ]
+
+    total_related = 0
+    total_questions = 0
+    for seed, rows in seed_map.items():
+        q_count = len(question_map.get(seed, []))
+        total_related += len(rows)
+        total_questions += q_count
+        lines.append(f"| {seed} | {len(rows)} | {q_count} |")
+
+    lines += [
+        f"| **TOTAL** | **{total_related}** | **{total_questions}** |",
+        "",
+        "---",
+        "",
+        "## Content Clusters",
+        "",
+    ]
+
+    for seed, rows in seed_map.items():
+        seed_slug = seed.replace(" ", "-")
+        vol_rows = sorted(rows, key=lambda r: _sv(r, "Search Volume"), reverse=True)
+        high_rel_rows = [r for r in rows if _rel(r) >= 0.65]
+        high_rel_rows.sort(key=lambda r: _sv(r, "Search Volume"), reverse=True)
+
+        # Top terms by volume
+        lines += [
+            f"### Cluster: {seed.title()}",
+            f"**Keyword files:** `{seed_slug}-related.csv`, `{seed_slug}-questions.csv`",
+            "",
+            "#### Top terms by search volume",
+            "",
+            "| Keyword | Volume | CPC | Competition | Intent | Tier | Rel |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for r in vol_rows[:15]:
+            phrase = r.get("Phrase", r.get("Keyword", "?"))
+            vol = _sv(r, "Search Volume")
+            cpc = r.get("CPC", "0")
+            comp = r.get("Competition", "0")
+            intent = classify_intent(phrase)
+            tier = classify_tier(r)
+            rel = f"{_rel(r):.2f}"
+            lines.append(f"| {phrase} | {vol} | ${cpc} | {comp} | {intent} | {tier} | {rel} |")
+
+        # High relevance terms (strong cluster signals)
+        if high_rel_rows:
+            lines += [
+                "",
+                "#### High-relevance keywords (rel >= 0.65) — strong cluster signals",
+                "",
+                "| Keyword | Volume | Rel |",
+                "|---|---|---|",
+            ]
+            for r in high_rel_rows:
+                phrase = r.get("Phrase", r.get("Keyword", "?"))
+                lines.append(f"| {phrase} | {_sv(r, 'Search Volume')} | {_rel(r):.2f} |")
+
+        lines += ["", "---", ""]
+
+    # AEO Question Targets section
+    lines += [
+        "## AEO Question Targets",
+        "",
+        "Questions from `phrase_questions` endpoint — high-value for featured snippets and People Also Ask.",
+        "",
+    ]
+
+    for seed, rows in question_map.items():
+        if not rows:
+            continue
+        non_zero = [r for r in rows if _sv(r, "Search Volume") > 0]
+        if not non_zero:
+            continue
+        non_zero.sort(key=lambda r: _sv(r, "Search Volume"), reverse=True)
+        lines += [
+            f"### {seed.title()}",
+            "",
+            "| Question | Volume | CPC |",
+            "|---|---|---|",
+        ]
+        for r in non_zero[:20]:
+            phrase = r.get("Phrase", r.get("Keyword", "?"))
+            lines.append(f"| {phrase} | {_sv(r, 'Search Volume')} | ${r.get('CPC', '0')} |")
+        lines.append("")
+
+    # Internal link architecture
+    lines += [
+        "---",
+        "",
+        "## Internal Link Architecture",
+        "",
+        "Every cluster article should link to its pillar page. Cross-link between",
+        "related clusters to distribute authority.",
+        "",
+        "```",
+        "                    HOME",
+        "                      |",
+    ]
+
+    pillars = [f"    {s.title()} (PILLAR)" for s in seed_map.keys()]
+    lines.append("          |".join([""] + ["           |           ".join([""] + pillars)]) + "")
+    lines += [
+        "                      |",
+        "          [cluster articles link to their pillar]",
+        "",
+        "    Related clusters cross-link to each other",
+        "```",
+        "",
+        "---",
+        "",
+        "## Content Priority",
+        "",
+        "| Priority | Description | Effort |",
+        "|---|---|---|",
+        "| P1 | AEO \"what is X\" guide per cluster | Medium |",
+        "| P1 | Comparison articles (X vs Y) | Low |",
+        "| P2 | Process / how-it-works articles | Medium |",
+        "| P2 | Industry-specific (aerospace, defence) | Medium |",
+        "| P3 | Long-tail niche / specification pages | Variable |",
+        "",
+        f"*Report generated by semrush_research.py — {today}*",
+    ]
+
+    report_path.write_text("\n".join(lines))
+    return report_path
+
+
 # ─── CLI ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -285,6 +464,69 @@ if __name__ == "__main__":
             print(f"  #{r['Position']} {r['Phrase']} | vol:{r['Search Volume']} cpc:${r['CPC']} | {r['Url'][:50]}")
         print(f"  ... +{len(data)-20} more")
         save_csv(data, f"{slug}-competitor.csv", slug)
+
+    elif cmd == "report":
+        project_slug = sys.argv[2] if len(sys.argv) > 2 else ""
+        if not project_slug:
+            print("Usage: python semrush_research.py report <project_slug> [seed_slug ...]")
+            print("  With no seed slugs: scans project_slug dir for all cached CSVs")
+            print("  With seed slugs: only includes those seeds")
+            sys.exit(1)
+
+        # Determine which seeds to include
+        seed_slugs = sys.argv[3:] if len(sys.argv) > 3 else None
+        output_dir = OUTPUT_DIR / project_slug
+
+        if not output_dir.exists():
+            print(f"Project directory not found: {output_dir}")
+            print("Run 'expand' first to generate data.")
+            sys.exit(1)
+
+        # Discover all seed subdirs (each seed has its own folder)
+        seed_dirs = {}
+        for subdir in sorted(output_dir.iterdir()):
+            if subdir.is_dir():
+                related_files = sorted(subdir.glob("*-related.csv"))
+                question_files = sorted(subdir.glob("*-questions.csv"))
+                if related_files or question_files:
+                    seed_name = subdir.name.replace("-", " ")
+                    seed_dirs[seed_name] = subdir
+
+        # Filter if specific seeds requested
+        if seed_slugs:
+            seed_slugs_norm = {s.replace("-", " ") for s in seed_slugs}
+            seed_dirs = {k: v for k, v in seed_dirs.items()
+                         if k.replace("-", " ") in seed_slugs_norm or k in seed_slugs_norm}
+
+        if not seed_dirs:
+            print(f"No seed data found in {output_dir}")
+            print("Run 'expand' first to generate data.")
+            sys.exit(1)
+
+        # Load data per seed
+        seed_map = {}
+        question_map = {}
+        for seed_name, subdir in seed_dirs.items():
+            related_files = sorted(subdir.glob("*-related.csv"))
+            question_files = sorted(subdir.glob("*-questions.csv"))
+            seed_map[seed_name] = []
+            question_map[seed_name] = []
+
+            for f in related_files:
+                rows = _load_csv(str(f))
+                for row in rows:
+                    row["_seed"] = seed_name
+                seed_map[seed_name].extend(rows)
+
+            for f in question_files:
+                rows = _load_csv(str(f))
+                for row in rows:
+                    row["_seed"] = seed_name
+                question_map[seed_name].extend(rows)
+
+        # Generate combined cluster report
+        report_path = _generate_cluster_report(project_slug, seed_map, question_map)
+        print(f"\nCluster report saved to: {report_path}")
 
     elif cmd == "help":
         print(__doc__)
