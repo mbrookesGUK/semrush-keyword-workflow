@@ -19,7 +19,7 @@ import requests
 from pathlib import Path
 from datetime import date
 
-API_KEY=os.environ.get("SEMRUSH_API_KEY", "YOUR_SEMRUSH_API_KEY_HERE")
+API_KEY = "INSERT YOUR KEY"
 BASE_URL = "https://api.semrush.com/"
 OUTPUT_DIR = Path.home() / "brain" / "projects"
 

@@ -23,7 +23,6 @@ Load this skill when the user asks to:
 
 ### API Key
 SEMRUSH_API_KEY must be set in your environment or passed as an argument.
-Test key placeholder (replace with your own): `YOUR_SEMRUSH_API_KEY_HERE`
 Get your own at: https://developer.semrush.com/
 
 ### Python Environment
