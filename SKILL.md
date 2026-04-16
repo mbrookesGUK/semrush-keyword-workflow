@@ -23,7 +23,6 @@ Load this skill when the user asks to:
 
 ### API Key
 SEMRUSH_API_KEY must be set in your environment or passed as an argument.
-Test key (confirmed working, April 2026): `40dd9298dd7e07223531eb7b80659c52`
 Get your own at: https://developer.semrush.com/
 
 ### Python Environment
